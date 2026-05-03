@@ -56,22 +56,6 @@ async def registration( user_data: UserCreate, db : AsyncSession = Depends(get_d
 
     return new_user
 
-
-@app.post("/activation")
-async def activation(activation_code:str, db : AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.activation_key == activation_code))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid activation key")
-    
-    user.is_active = True
-    user.activation_key = None
-
-    await db.commit()
-    
-    return {"status":"success", "message": "Account activated"}
-
 @app.post("/login")
 async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == login_data.email))
@@ -153,15 +137,11 @@ async def activate_key(payload: dict, db: AsyncSession = Depends(get_db)):
     activation_key = payload.get("key")
     if not activation_key:
         raise HTTPException(status_code=400, detail="Key is required")
-
-    # 1. Ищем юзера по ключу
     result = await db.execute(select(User).where(User.activation_key == activation_key))
     user = result.scalar_one_or_none()
     
     if not user:
         raise HTTPException(status_code=404, detail="Invalid or expired key")
-
-    # 2. Ищем свободную VM
 
     await db.execute(
         update(VirtualMachine)
@@ -203,7 +183,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
     await websocket.accept()
     try:
         while True:
-            # Здесь можно реализовать проверку, не отобрал ли админ VM у юзера
             async with async_session_maker() as db:
                 vm_result = await db.execute(
                     select(VirtualMachine).where(VirtualMachine.current_user_id == user_id)
@@ -216,9 +195,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
                     await websocket.send_json({"status": "disconnected", "message": "Proxy released by server"})
                     break
             
-            await asyncio.sleep(5) # Проверяем статус каждые 5 секунд
+            await asyncio.sleep(5)
     except WebSocketDisconnect:
-        # При дисконнекте приложения — освобождаем ресурсы
         async with async_session_maker() as db:
             result = await db.execute(
                 select(VirtualMachine).where(VirtualMachine.current_user_id == user_id)

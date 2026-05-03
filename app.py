@@ -34,7 +34,13 @@ def main(page: fl.Page):
                 resp = await client.post(API_URL, json={"key": key_input.value})
             
             if resp.status_code != 200:
-                status_label.value = f"Ошибка: {resp.status_code}"
+                try:
+                    error_data = resp.json()
+                    detail = error_data.get("detail", "Неизвестная ошибка")
+                except:
+                    detail = "Ошибка сервера"
+
+                status_label.value = f"Ошибка {resp.status_code}: {detail}"
                 status_label.color = "red"
                 page.update()
                 return
