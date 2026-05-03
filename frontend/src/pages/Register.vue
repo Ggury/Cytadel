@@ -65,7 +65,6 @@ const success = ref(false)
 const handleRegister = async () => {
   loading.value = true
   try {
-    // Убедись, что твой FastAPI запущен на 8000 порту
     await axios.post('http://localhost:8000/register', {
       email: email.value,
       password: password.value,

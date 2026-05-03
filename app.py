@@ -2,58 +2,69 @@ import flet as fl
 import websockets
 import json
 import asyncio
+import httpx
+
 def main(page: fl.Page):
-    # Теперь URL чистый, без ID в конце
-    WS_URL = "ws://localhost:8000/ws/status/" 
+    API_URL = "http://localhost:8000/api/activate-key"
+    WS_URL = "ws://localhost:8000/ws/status/"
     
     page.title = "Cytadel Proxy"
-    page.window_width = 400
-    page.window_height = 450
+    page.window_width = 100
+    page.window_height = 100
     page.theme_mode = fl.ThemeMode.DARK
 
-    # Поле только для ключа
-    activation_key_field = fl.TextField(
-        label="Ключ активации", 
-        text_align=fl.TextAlign.CENTER,
-        password=True, 
-        can_reveal_password=True
-    )
-    status_text = fl.Text("Статус: Отключено", color="red", size=16)
 
-    async def connect_ws_task(activation_key):
+    page.vertical_alignment = fl.MainAxisAlignment.CENTER
+    page.horizontal_alignment = fl.CrossAxisAlignment.CENTER
+
+
+    key_input = fl.TextField(label="Вставьте ваш ключ", password=True, can_reveal_password=True)
+    status_label = fl.Text("Статус: Отключено", color="red")
+    info_label = fl.Text("")
+
+    async def start_connection(e):
+        if not key_input.value: return
+        
+        status_label.value = "Статус: Ожидание..."
+        status_label.color = "orange"
+        page.update()
+
         try:
-            async with websockets.connect(WS_URL) as websocket:
-                # Просто шлем ключ. Сервер сам поймет, кто мы.
-                await websocket.send(json.dumps({"key": activation_key}))
-                
-                response = await websocket.recv()
-                data = json.loads(response)
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(API_URL, json={"key": key_input.value})
+            
+            if resp.status_code != 200:
+                status_label.value = f"Ошибка: {resp.status_code}"
+                status_label.color = "red"
+                page.update()
+                return
 
-                if data["status"] == "connected":
-                    status_text.value = f"Подключено: {data['host']}:{data['port']}"
-                    status_text.color = "green"
+            data = resp.json()
+            user_id = data["user_id"]
+            info_label.value = f"Host: {data['host']}\nPort: {data['port']}"
+
+            async with websockets.connect(f"{WS_URL}{user_id}") as ws:
+                async for msg in ws:
+                    res = json.loads(msg)
+                    if res["status"] == "connected":
+                        status_label.value = "Статус: Подключено"
+                        status_label.color = "green"
+                    else:
+                        status_label.value = "Статус: Отключено"
+                        status_label.color = "red"
                     page.update()
-                    while True: await asyncio.sleep(1)
-                else:
-                    status_text.value = f"Ошибка: {data.get('message')}"
-                    status_text.color = "red"
-                    page.update()
-        except:
-            status_text.value = "Ошибка соединения"
-            status_text.color = "red"
+        except Exception as ex:
+            status_label.value = "Ошибка соединения"
             page.update()
-
-    def on_connect(e):
-        page.run_task(connect_ws_task, activation_key_field.value)
 
     page.add(
         fl.Column([
-            fl.Icon(fl.icons.Icons.SHIELD_OUTLINED, size=50, color="blue"),
-            fl.Text("Cytadel Activation", size=20),
-            activation_key_field,
-            fl.ElevatedButton("Активировать", on_click=on_connect, width=200),
-            status_text
-        ], horizontal_alignment=fl.CrossAxisAlignment.CENTER, spacing=20)
+            fl.Text("Cytadel Proxy", size=25),
+            key_input,
+            fl.ElevatedButton("Подключиться", on_click=start_connection),
+            status_label,
+            info_label
+        ], horizontal_alignment=fl.CrossAxisAlignment.CENTER)
     )
 
 fl.app(target=main)

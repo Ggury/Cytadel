@@ -22,15 +22,13 @@
 <script setup>
 import { ref } from 'vue'
 import axios from 'axios'
-import { useRouter } from 'vue-router' // Импортируем хук роутера
+import { useRouter } from 'vue-router'
 
 const email = ref('')
 const password = ref('')
-const router = useRouter() // Инициализируем его
-
+const router = useRouter()
 const handleLogin = async () => {
   try {
-    // Вторым аргументом идет сам объект с данными (это пойдет в Body)
     const res = await axios.post('http://localhost:8000/login', {
       email: email.value,
       password: password.value

@@ -3,11 +3,12 @@ from databases import Base, engine, async_session_maker, User, VirtualMachine
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from schemas import UserCreate, UserOut,LoginRequest, ChangePasswordRequest
 from utils  import hash_password, generate_activation_key, verify_password
 from tasks import send_activation_code
 import json
+import asyncio
 from datetime import datetime
 
 
@@ -146,59 +147,84 @@ async def new_password(
     return {"status": "success", "message": "password updated"}
     
 
-@app.websocket("/ws/status/")
-async def websocket_endpoint(websocket: WebSocket):
+
+@app.post("/api/activate-key")
+async def activate_key(payload: dict, db: AsyncSession = Depends(get_db)):
+    activation_key = payload.get("key")
+    if not activation_key:
+        raise HTTPException(status_code=400, detail="Key is required")
+
+    # 1. Ищем юзера по ключу
+    result = await db.execute(select(User).where(User.activation_key == activation_key))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid or expired key")
+
+    # 2. Ищем свободную VM
+
+    await db.execute(
+        update(VirtualMachine)
+        .where(VirtualMachine.current_user_id == user.id)
+        .values(current_user_id=None)
+    )
+
+    vm_result = await db.execute(
+        select(VirtualMachine).where(
+            VirtualMachine.current_user_id == None, 
+            VirtualMachine.is_active == True
+        ).limit(1))
+    vm = vm_result.scalar_one_or_none()
+
+    if not vm:
+        raise HTTPException(status_code=503, detail="All proxies are busy")
+
+    user.is_active = True
+    vm.current_user_id = user.id
+    vm.last_used_at = datetime.utcnow()
+    
+    new_key = generate_activation_key()
+    user.activation_key = new_key
+    
+    await db.commit()
+
+    send_activation_code.delay(user.email, new_key)
+    return {
+        "status": "connected",
+        "user_id": user.id,
+        "host": vm.host,
+        "port": vm.port,
+        "protocol": vm.protocol
+    }
+
+
+@app.websocket("/ws/status/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
     await websocket.accept()
     try:
         while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            activation_key = message.get("key")
-
+            # Здесь можно реализовать проверку, не отобрал ли админ VM у юзера
             async with async_session_maker() as db:
-                user_result = await db.execute(select(User).where(User.activation_key == activation_key))
-                user = user_result.scalar_one_or_none()
-                if not user:
-                    await websocket.send_json({"status": "error", "message": "Invalid key"})
-                    continue
-                
-                if not user.is_active and user.activation_key == activation_key:
-                    user.is_active = True
-                    #user.activation_key = None
-                elif not user.is_active:
-                    await websocket.send_json({"status": "error", "message": "Account not activated"})
-                    continue
-                
-                user_id = user.id
                 vm_result = await db.execute(
-                    select(VirtualMachine).where(
-                        VirtualMachine.current_user_id == None, 
-                        VirtualMachine.is_active == True
-                    ).limit(1))
+                    select(VirtualMachine).where(VirtualMachine.current_user_id == user_id)
+                )
                 vm = vm_result.scalar_one_or_none()
-
+                
                 if vm:
-                    vm.current_user_id = user_id
-                    vm.last_used_at = datetime.utcnow()
-                    await db.commit()
-
-                    await websocket.send_json(
-                        {
-                            "status": "connected",
-                            "host" : vm.host,
-                            "port" : vm.port,
-                            "protocol" : vm.protocol
-                        }
-                    )
+                    await websocket.send_json({"status": "connected"})
                 else:
-                    await websocket.send_json({"status": "no_free_vms", "message": "All proxies are busy"})
+                    await websocket.send_json({"status": "disconnected", "message": "Proxy released by server"})
+                    break
+            
+            await asyncio.sleep(5) # Проверяем статус каждые 5 секунд
     except WebSocketDisconnect:
+        # При дисконнекте приложения — освобождаем ресурсы
         async with async_session_maker() as db:
-            vm_result = await db.execute(
+            result = await db.execute(
                 select(VirtualMachine).where(VirtualMachine.current_user_id == user_id)
             )
-            vm = vm_result.scalar_one_or_none()
-            if vm:
+            vms = result.scalars().all()
+            for vm in vms:
                 vm.current_user_id = None
-                await db.commit()
-            print(f"Client #{user_id} disconnected")
+            await db.commit()
+        print(f"User {user_id} disconnected")

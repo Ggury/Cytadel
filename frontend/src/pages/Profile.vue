@@ -55,19 +55,16 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const userId = localStorage.getItem('user_id')
 
-// Реактивные переменные
 const activationKey = ref('Загрузка...')
 const updatingKey = ref(false)
-const passwords = ref({ old: '', new: '', confirm: '' }) // Добавил confirm для бэкенда
+const passwords = ref({ old: '', new: '', confirm: '' })
 
-// 1. Загрузка ключа (GET /getkey)
 const fetchKey = async () => {
   if (!userId) return
   try {
     const res = await axios.get(`http://localhost:8000/getkey`, {
       params: { user_id: userId }
     })
-    // Если ключа в базе нет (null), оставим заглушку
     activationKey.value = res.data || 'Ключ еще не сгенерирован'
   } catch (e) {
     console.error("Ошибка при получении ключа:", e)
@@ -75,14 +72,11 @@ const fetchKey = async () => {
   }
 }
 
-// 2. Обновление ключа (POST /refresh_key)
 const refreshKey = async () => {
   updatingKey.value = true
   try {
-    // Выполняем рефреш на бэкенде
     await axios.post(`http://localhost:8000/refresh_key/${userId}`)
     
-    // Сразу запрашиваем обновленный ключ из базы
     await fetchKey()
     
     alert("Ключ успешно обновлен и отправлен на почту")
@@ -97,15 +91,14 @@ const refreshKey = async () => {
 // 3. Смена пароля
 const changePassword = async () => {
   try {
-    // ВАЖНО: Проверь путь /change_password (в main.py было через подчеркивание)
     await axios.post('http://localhost:8000/change_password', {
       user_id: parseInt(userId),
       old_password: passwords.value.old,
       new_password: passwords.value.new,
-      confirm_password: passwords.value.confirm // Или добавь отдельное поле в форму
+      confirm_password: passwords.value.confirm
     })
     alert('Пароль успешно изменен')
-    passwords.value = { old: '', new: '' } // Очистка формы
+    passwords.value = { old: '', new: '' }
   } catch (e) {
     alert('Ошибка: ' + (e.response?.data?.detail || 'не удалось сменить пароль'))
   }
@@ -116,7 +109,6 @@ const logout = () => {
   router.push('/login')
 }
 
-// При входе на страницу сразу тянем данные
 onMounted(() => {
   if (!userId) {
     router.push('/login')
