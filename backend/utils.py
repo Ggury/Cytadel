@@ -12,5 +12,4 @@ def generate_activation_key (length = 32) -> str:
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 def verify_password(plain_password: str, hashed_password: str):
-    # Явно указываем библиотеке, что есть что
     return pwd_context.verify(secret=plain_password, hash=hashed_password)
